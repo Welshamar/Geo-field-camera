@@ -8,14 +8,28 @@ interface Props {
 }
 
 function openSettings() {
-  // Linking.openSettings() has no web implementation — browsers manage
-  // per-site camera/location permission via the address-bar padlock, not
-  // an OS settings screen.
+  // Linking.openSettings() has no web implementation, and no web page can
+  // programmatically open a browser's or OS's settings screen — browsers
+  // block that for security. The best we can do is tell the user exactly
+  // where to look, which differs depending on whether this is running as
+  // the installed app (no address bar to tap) or a normal browser tab.
   if (Platform.OS === 'web') {
-    Alert.alert(
-      'Check browser permissions',
-      "Click the lock or info icon in your browser's address bar, allow Camera and Location for this site, then reload the page."
-    );
+    const isStandalone =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia === 'function' &&
+      window.matchMedia('(display-mode: standalone)').matches;
+
+    const message = isStandalone
+      ? "This is the installed app, so there's no address bar to tap. On Android: long-press this app's icon on your home screen, open \"App info\", then \"Permissions\", and turn on Camera and Location. Then reopen the app."
+      : "Tap the lock or info icon just left of the web address at the top of the screen, turn on Camera and Location for this site, then reload the page.";
+
+    // window.alert is used directly (rather than RN's Alert.alert) because
+    // its web rendering isn't guaranteed to be visible across platforms.
+    if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+      window.alert(message);
+    } else {
+      Alert.alert('Check permissions', message);
+    }
     return;
   }
   Linking.openSettings();
