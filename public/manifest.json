@@ -1,4 +1,5 @@
 {
+  "id": "/",
   "short_name": "GeoField",
   "name": "GeoFieldCamera",
   "description": "Geography fieldwork camera: geotagged, watermarked photo capture with live GPS accuracy.",
