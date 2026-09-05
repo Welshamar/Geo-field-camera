@@ -33,17 +33,30 @@ const ALBUM_NAME = 'GeoField Photos';
 // WatermarkCanvas for why this needs to be close to the real photo
 // resolution, not a tiny fixed size. Capped so an extremely
 // high-resolution capture doesn't force rendering (and decoding the
-// source photo into) an enormous off-screen view.
-const MAX_WATERMARK_CANVAS_WIDTH = 1600;
+// source photo into) an enormous off-screen view. Raised well above most
+// phone cameras' native width (commonly 3000-4032px) so the vast majority
+// of captures render at effectively full detail with no meaningful
+// upscaling at all.
+const MAX_WATERMARK_CANVAS_WIDTH = 3200;
 const APP_SOFTWARE_TAG = 'Geo Field Camera 1.0.0';
 
 // The `ratio` prop only affects Android (expo-camera has no iOS
 // equivalent), so the control that changes it is hidden on iOS.
 const RATIO_OPTIONS: CameraRatio[] = ['4:3', '16:9', '1:1'];
 
-// Cycle order for the flash mode badge. 'screen' (front-camera screen
-// flash) isn't relevant for a back-facing camera, so it's left out.
-const FLASH_MODES: FlashMode[] = ['auto', 'on', 'off'];
+// Cycle order for the flash mode badge, starting with 'on': expo-camera
+// exposes no manual exposure/brightness control on native platforms at
+// all (only on web — see WebCameraSettings in Camera.types), so forcing
+// flash to actually fire on every capture is the most effective lever
+// available here for low-light brightness, more than leaving it on
+// 'auto' (which can decide not to fire even in a dark room).
+const FLASH_MODES: FlashMode[] = ['on', 'auto', 'off'];
+
+function parseSizeArea(size: string): number {
+  const match = size.match(/^(\d+)x(\d+)$/);
+  if (!match) return 0;
+  return Number(match[1]) * Number(match[2]);
+}
 
 // expo-media-library runs native-module setup as soon as its module code
 // executes, which throws immediately on web (no OS photo gallery exists in
@@ -140,14 +153,26 @@ function CameraScreen() {
   const [availableSizes, setAvailableSizes] = useState<string[]>([]);
   const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
   const [sizePickerOpen, setSizePickerOpen] = useState(false);
-  const [flashIndex, setFlashIndex] = useState(0); // starts at 'auto'
+  const userPickedSizeRef = useRef(false);
+  const [flashIndex, setFlashIndex] = useState(0); // starts at 'on'
   const flash = FLASH_MODES[flashIndex];
   const [torchOn, setTorchOn] = useState(false);
 
   const handleCameraReady = useCallback(async () => {
     try {
       const sizes = await cameraRef.current?.getAvailablePictureSizesAsync();
-      if (sizes && sizes.length > 0) setAvailableSizes(sizes);
+      if (sizes && sizes.length > 0) {
+        setAvailableSizes(sizes);
+        // Default to the device's highest resolution rather than leaving
+        // pictureSize unset — "device default" is not reliably the max
+        // available size, it's whatever the platform happens to pick.
+        if (!userPickedSizeRef.current) {
+          const largest = sizes.reduce((best, s) =>
+            parseSizeArea(s) > parseSizeArea(best) ? s : best
+          );
+          if (parseSizeArea(largest) > 0) setPictureSize(largest);
+        }
+      }
     } catch {
       // Some devices/platforms don't support querying this — the resolution
       // picker just won't have any options to show, no crash either way.
@@ -375,17 +400,23 @@ function CameraScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Photo resolution</Text>
             <FlatList
-              data={['Auto (device default)', ...availableSizes]}
+              data={['Max (auto)', ...availableSizes]}
               keyExtractor={(item) => item}
               style={styles.modalList}
               renderItem={({ item }) => {
-                const isAuto = item === 'Auto (device default)';
-                const active = isAuto ? pictureSize === undefined : pictureSize === item;
+                const isAutoMax = item === 'Max (auto)';
+                const largestSize = isAutoMax
+                  ? availableSizes.reduce((best, s) =>
+                      parseSizeArea(s) > parseSizeArea(best) ? s : best
+                    )
+                  : null;
+                const active = isAutoMax ? pictureSize === largestSize : pictureSize === item;
                 return (
                   <Pressable
                     style={[styles.modalRow, active && styles.modalRowActive]}
                     onPress={() => {
-                      setPictureSize(isAuto ? undefined : item);
+                      userPickedSizeRef.current = !isAutoMax;
+                      setPictureSize(isAutoMax ? largestSize ?? undefined : item);
                       setSizePickerOpen(false);
                     }}
                   >
