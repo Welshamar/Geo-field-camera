@@ -20,8 +20,8 @@ export default function ShutterButton({ disabled, busy, onPress }: Props) {
         pressed && !disabled && !busy && styles.outerRingPressed,
       ]}
     >
-      <View style={styles.innerCircle}>
-        {busy ? <ActivityIndicator color="#0A0A0A" size="small" /> : null}
+      <View style={[styles.innerCircle, disabled && styles.innerCircleDisabled]}>
+        {busy ? <ActivityIndicator color="#FFFFFF" size="small" /> : null}
       </View>
     </Pressable>
   );
@@ -49,8 +49,11 @@ const styles = StyleSheet.create({
     width: SIZE - 16,
     height: SIZE - 16,
     borderRadius: (SIZE - 16) / 2,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#5C0A1E', // deep maroon
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  innerCircleDisabled: {
+    backgroundColor: '#5C3038',
   },
 });

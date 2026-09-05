@@ -19,6 +19,7 @@ import { ViewShotRef } from 'react-native-view-shot';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ExifTags } from '@lodev09/react-native-exify';
 
+import FocusGrid from './src/components/FocusGrid';
 import GPSOverlay from './src/components/GPSOverlay';
 import ShutterButton from './src/components/ShutterButton';
 import PermissionScreen from './src/components/PermissionScreen';
@@ -342,6 +343,8 @@ function CameraScreen() {
         enableTorch={torchOn}
         onCameraReady={handleCameraReady}
       />
+
+      <FocusGrid />
 
       <View style={[styles.topOverlay, { top: insets.top + 12 }]} pointerEvents="none">
         <GPSOverlay fix={fix} lockLevel={lockLevel} errorMsg={errorMsg} />
