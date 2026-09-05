@@ -12,7 +12,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { CameraRatio, CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraRatio, CameraView, FlashMode, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import * as Device from 'expo-device';
 import { ViewShotRef } from 'react-native-view-shot';
@@ -23,27 +23,27 @@ import GPSOverlay from './src/components/GPSOverlay';
 import ShutterButton from './src/components/ShutterButton';
 import PermissionScreen from './src/components/PermissionScreen';
 import WatermarkCanvas from './src/components/WatermarkCanvas';
+import ZoomSlider from './src/components/ZoomSlider';
 import { useLocationTracker } from './src/hooks/useLocationTracker';
 import { formatExifDateTime, gpsLockLevel } from './src/utils/format';
 import { CaptureJob, GeoFix } from './src/types';
 
 const ALBUM_NAME = 'GeoField Photos';
-const WATERMARK_CANVAS_WIDTH = 420;
+// Cap on the watermark compositor's on-screen render width — see
+// WatermarkCanvas for why this needs to be close to the real photo
+// resolution, not a tiny fixed size. Capped so an extremely
+// high-resolution capture doesn't force rendering (and decoding the
+// source photo into) an enormous off-screen view.
+const MAX_WATERMARK_CANVAS_WIDTH = 1600;
 const APP_SOFTWARE_TAG = 'Geo Field Camera 1.0.0';
-
-// expo-camera's `zoom` prop is a 0-1 fraction of the device's max optical
-// zoom range, not a "2x/3x" multiplier — these are just evenly spaced
-// presets across that range, labeled the way a camera app's UI
-// conventionally does.
-const ZOOM_PRESETS: Array<{ label: string; value: number }> = [
-  { label: '1x', value: 0 },
-  { label: '2x', value: 0.35 },
-  { label: '3x', value: 0.7 },
-];
 
 // The `ratio` prop only affects Android (expo-camera has no iOS
 // equivalent), so the control that changes it is hidden on iOS.
 const RATIO_OPTIONS: CameraRatio[] = ['4:3', '16:9', '1:1'];
+
+// Cycle order for the flash mode badge. 'screen' (front-camera screen
+// flash) isn't relevant for a back-facing camera, so it's left out.
+const FLASH_MODES: FlashMode[] = ['auto', 'on', 'off'];
 
 // expo-media-library runs native-module setup as soon as its module code
 // executes, which throws immediately on web (no OS photo gallery exists in
@@ -140,6 +140,9 @@ function CameraScreen() {
   const [availableSizes, setAvailableSizes] = useState<string[]>([]);
   const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
   const [sizePickerOpen, setSizePickerOpen] = useState(false);
+  const [flashIndex, setFlashIndex] = useState(0); // starts at 'auto'
+  const flash = FLASH_MODES[flashIndex];
+  const [torchOn, setTorchOn] = useState(false);
 
   const handleCameraReady = useCallback(async () => {
     try {
@@ -209,7 +212,7 @@ function CameraScreen() {
   // disabled forever — proceed with the capture anyway after a timeout.
   useEffect(() => {
     if (!pendingJob) return;
-    const timer = setTimeout(() => setImageReady(true), 3000);
+    const timer = setTimeout(() => setImageReady(true), 5000);
     return () => clearTimeout(timer);
   }, [pendingJob]);
 
@@ -310,6 +313,8 @@ function CameraScreen() {
         zoom={zoom}
         ratio={Platform.OS === 'android' ? ratio : undefined}
         pictureSize={pictureSize}
+        flash={flash}
+        enableTorch={torchOn}
         onCameraReady={handleCameraReady}
       />
 
@@ -335,6 +340,30 @@ function CameraScreen() {
           </Pressable>
         </View>
       )}
+
+      <View style={[styles.flashBadge, { bottom: insets.bottom + 206 }]}>
+        <Pressable
+          style={styles.ratioButton}
+          onPress={() => setFlashIndex((i) => (i + 1) % FLASH_MODES.length)}
+        >
+          <Text style={styles.ratioButtonText}>Flash: {flash}</Text>
+        </Pressable>
+      </View>
+
+      <View style={[styles.torchBadge, { bottom: insets.bottom + 254 }]}>
+        <Pressable
+          style={[styles.ratioButton, torchOn && styles.torchButtonActive]}
+          onPress={() => setTorchOn((t) => !t)}
+        >
+          <Text style={[styles.ratioButtonText, torchOn && styles.torchButtonTextActive]}>
+            Torch {torchOn ? 'ON' : 'OFF'}
+          </Text>
+        </Pressable>
+      </View>
+
+      <View style={[styles.zoomSliderHost, { top: '32%' }]} pointerEvents="box-none">
+        <ZoomSlider value={zoom} onChange={setZoom} />
+      </View>
 
       <Modal
         visible={sizePickerOpen}
@@ -381,22 +410,6 @@ function CameraScreen() {
       )}
 
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
-        <View style={styles.zoomRow}>
-          {ZOOM_PRESETS.map((preset) => {
-            const active = zoom === preset.value;
-            return (
-              <Pressable
-                key={preset.label}
-                style={[styles.zoomButton, active && styles.zoomButtonActive]}
-                onPress={() => setZoom(preset.value)}
-              >
-                <Text style={[styles.zoomButtonText, active && styles.zoomButtonTextActive]}>
-                  {preset.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
         <ShutterButton disabled={!fix} busy={isCapturing} onPress={handleCapture} />
         <Text style={styles.hint}>
           {fix ? 'Coordinates locked to next photo' : 'Waiting for GPS before shutter unlocks'}
@@ -410,7 +423,7 @@ function CameraScreen() {
           <WatermarkCanvas
             ref={viewShotRef}
             job={pendingJob}
-            canvasWidth={WATERMARK_CANVAS_WIDTH}
+            canvasWidth={Math.min(pendingJob.width, MAX_WATERMARK_CANVAS_WIDTH)}
             onImageLoad={() => setImageReady(true)}
             onImageError={() => setImageReady(true)}
           />
@@ -488,28 +501,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 16,
   },
-  zoomRow: {
-    flexDirection: 'row',
-    marginBottom: 18,
-    backgroundColor: 'rgba(0,0,0,0.5)',
-    borderRadius: 20,
-    padding: 4,
-  },
-  zoomButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 7,
-    borderRadius: 16,
-  },
-  zoomButtonActive: {
-    backgroundColor: '#FFFFFF',
-  },
-  zoomButtonText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  zoomButtonTextActive: {
-    color: '#0A0A0A',
+  zoomSliderHost: {
+    position: 'absolute',
+    left: 16,
   },
   ratioBadge: {
     position: 'absolute',
@@ -518,6 +512,20 @@ const styles = StyleSheet.create({
   resolutionBadge: {
     position: 'absolute',
     right: 16,
+  },
+  flashBadge: {
+    position: 'absolute',
+    right: 16,
+  },
+  torchBadge: {
+    position: 'absolute',
+    right: 16,
+  },
+  torchButtonActive: {
+    backgroundColor: '#FFCC00',
+  },
+  torchButtonTextActive: {
+    color: '#0A0A0A',
   },
   ratioButton: {
     backgroundColor: 'rgba(0,0,0,0.6)',

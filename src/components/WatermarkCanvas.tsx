@@ -13,10 +13,13 @@ interface Props {
 
 /**
  * Off-screen composite used purely to burn a lat/lon/timestamp watermark
- * into the bottom-right corner of the captured photo. It is rendered at a
- * small on-screen size (canvasWidth) but exported at the photo's native
- * pixel resolution by CameraScreen, which scales the watermark text up
- * proportionally so it stays correctly sized in the final image.
+ * into the bottom-right corner of the captured photo. `canvasWidth` should
+ * be close to the actual photo's pixel width (see CameraScreen, which caps
+ * it for very large photos to bound memory use) — ViewShot's width/height
+ * capture options scale up whatever was actually rendered, so rendering at
+ * a much smaller size than the source photo (e.g. a few hundred px) and
+ * relying on that resize to reach full resolution just produces a
+ * blurry, upscaled result rather than genuine detail.
  */
 const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
   ({ job, canvasWidth, onImageLoad, onImageError }, ref) => {
@@ -28,7 +31,7 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
         ref={ref}
         options={{
           format: 'jpg',
-          quality: 0.92,
+          quality: 0.95,
           result: 'tmpfile',
           width: job.width,
           height: job.height,
@@ -47,6 +50,11 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
               {formatCoordinate(job.fix.latitude, 'lat')}{' '}
               {formatCoordinate(job.fix.longitude, 'lon')}
             </Text>
+            {job.fix.altitude !== null && (
+              <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
+                Alt {job.fix.altitude.toFixed(1)}m
+              </Text>
+            )}
             {job.fix.accuracy !== null && (
               <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
                 ±{job.fix.accuracy.toFixed(1)}m accuracy
