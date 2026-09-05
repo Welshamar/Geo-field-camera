@@ -4,7 +4,7 @@
     "slug": "GeoFieldCamera",
     "version": "1.0.0",
     "owner": "welborntrack",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {

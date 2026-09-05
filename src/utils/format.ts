@@ -25,6 +25,18 @@ export function formatExifDateTime(ms: number): string {
   )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// expo-camera's `zoom` prop is a 0-1 fraction of the device's zoom range,
+// not a real optical "Xx" factor — there's no API to read the device's
+// actual max zoom multiplier. This is a fixed, approximate mapping used
+// consistently everywhere zoom is displayed, not a measured value.
+export function zoomFractionToMultiplier(zoomFraction: number): number {
+  return 1 + zoomFraction * 9;
+}
+
+export function formatZoom(zoomFraction: number): string {
+  return `${zoomFractionToMultiplier(zoomFraction).toFixed(1)}x`;
+}
+
 export function gpsLockLevel(accuracy: number | null): 'none' | 'red' | 'yellow' | 'green' {
   if (accuracy === null || Number.isNaN(accuracy)) return 'none';
   if (accuracy < 10) return 'green';

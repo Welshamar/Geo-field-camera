@@ -10,6 +10,7 @@ import {
   StatusBar,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { CameraRatio, CameraView, FlashMode, useCameraPermissions } from 'expo-camera';
@@ -26,7 +27,7 @@ import PermissionScreen from './src/components/PermissionScreen';
 import WatermarkCanvas from './src/components/WatermarkCanvas';
 import ZoomSlider from './src/components/ZoomSlider';
 import { useLocationTracker } from './src/hooks/useLocationTracker';
-import { formatExifDateTime, gpsLockLevel } from './src/utils/format';
+import { formatExifDateTime, formatZoom, gpsLockLevel } from './src/utils/format';
 import { CaptureJob, GeoFix } from './src/types';
 
 const ALBUM_NAME = 'GeoField Photos';
@@ -137,6 +138,8 @@ function useStartupPermissions() {
 
 function CameraScreen() {
   const insets = useSafeAreaInsets();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const isLandscape = windowWidth > windowHeight;
   const cameraRef = useRef<CameraView>(null);
   const viewShotRef = useRef<ViewShotRef>(null);
 
@@ -226,12 +229,13 @@ function CameraScreen() {
         height: photo.height,
         fix: capturedFix,
         capturedAt,
+        zoom,
       });
     } catch (err) {
       Alert.alert('Capture failed', err instanceof Error ? err.message : 'Unknown error.');
       setIsCapturing(false);
     }
-  }, [fix, isCapturing]);
+  }, [fix, isCapturing, zoom]);
 
   // Safety net: local file:// images should fire onLoad almost instantly,
   // but if it never fires for some reason, don't leave the shutter stuck
@@ -329,6 +333,15 @@ function CameraScreen() {
     return () => clearTimeout(timer);
   }, [lastSavedAt]);
 
+  // Badges (ratio/resolution/flash/torch) stack bottom-up on the right in
+  // portrait, but move to the left edge stacking top-down in landscape —
+  // the shutter relocates to a vertically-centered right edge in
+  // landscape, so the badges would otherwise collide with it.
+  const badgePosition = (index: number) =>
+    isLandscape
+      ? { left: (insets.left || 0) + 16, top: insets.top + 90 + index * 48 }
+      : { right: 16, bottom: insets.bottom + 110 + index * 48 };
+
   return (
     <View style={styles.flex}>
       <StatusBar barStyle="light-content" />
@@ -351,7 +364,7 @@ function CameraScreen() {
       </View>
 
       {Platform.OS === 'android' && (
-        <View style={[styles.ratioBadge, { bottom: insets.bottom + 110 }]}>
+        <View style={[styles.floatingBadge, badgePosition(0)]}>
           <Pressable
             style={styles.ratioButton}
             onPress={() => setRatioIndex((i) => (i + 1) % RATIO_OPTIONS.length)}
@@ -362,14 +375,14 @@ function CameraScreen() {
       )}
 
       {availableSizes.length > 0 && (
-        <View style={[styles.resolutionBadge, { bottom: insets.bottom + 158 }]}>
+        <View style={[styles.floatingBadge, badgePosition(1)]}>
           <Pressable style={styles.ratioButton} onPress={() => setSizePickerOpen(true)}>
             <Text style={styles.ratioButtonText}>{pictureSize ?? 'Auto res'}</Text>
           </Pressable>
         </View>
       )}
 
-      <View style={[styles.flashBadge, { bottom: insets.bottom + 206 }]}>
+      <View style={[styles.floatingBadge, badgePosition(2)]}>
         <Pressable
           style={styles.ratioButton}
           onPress={() => setFlashIndex((i) => (i + 1) % FLASH_MODES.length)}
@@ -378,7 +391,7 @@ function CameraScreen() {
         </Pressable>
       </View>
 
-      <View style={[styles.torchBadge, { bottom: insets.bottom + 254 }]}>
+      <View style={[styles.floatingBadge, badgePosition(3)]}>
         <Pressable
           style={[styles.ratioButton, torchOn && styles.torchButtonActive]}
           onPress={() => setTorchOn((t) => !t)}
@@ -389,7 +402,16 @@ function CameraScreen() {
         </Pressable>
       </View>
 
-      <View style={[styles.zoomSliderHost, { top: '32%' }]} pointerEvents="box-none">
+      <View
+        style={[
+          styles.zoomSliderHost,
+          isLandscape
+            ? { left: (insets.left || 0) + 16, top: insets.top + 90 + 4 * 48 + 16 }
+            : { left: 16, top: '32%' },
+        ]}
+        pointerEvents="box-none"
+      >
+        <Text style={styles.zoomLabel}>Zoom {formatZoom(zoom)}</Text>
         <ZoomSlider value={zoom} onChange={setZoom} />
       </View>
 
@@ -443,7 +465,14 @@ function CameraScreen() {
         </View>
       )}
 
-      <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
+      <View
+        style={[
+          isLandscape ? styles.shutterAreaLandscape : styles.bottomBar,
+          isLandscape
+            ? { right: insets.right + 24 }
+            : { paddingBottom: insets.bottom + 24 },
+        ]}
+      >
         <ShutterButton disabled={!fix} busy={isCapturing} onPress={handleCapture} />
         <Text style={styles.hint}>
           {fix ? 'Coordinates locked to next photo' : 'Waiting for GPS before shutter unlocks'}
@@ -535,25 +564,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 16,
   },
+  shutterAreaLandscape: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   zoomSliderHost: {
     position: 'absolute',
-    left: 16,
+    alignItems: 'center',
   },
-  ratioBadge: {
-    position: 'absolute',
-    right: 16,
+  zoomLabel: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowRadius: 4,
   },
-  resolutionBadge: {
+  floatingBadge: {
     position: 'absolute',
-    right: 16,
-  },
-  flashBadge: {
-    position: 'absolute',
-    right: 16,
-  },
-  torchBadge: {
-    position: 'absolute',
-    right: 16,
   },
   torchButtonActive: {
     backgroundColor: '#FFCC00',
