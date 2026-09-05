@@ -5,12 +5,13 @@ import {
   Dimensions,
   Image,
   Platform,
+  Pressable,
   StatusBar,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraRatio, CameraView, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
 import * as Device from 'expo-device';
 import { ViewShotRef } from 'react-native-view-shot';
@@ -27,15 +28,35 @@ import { CaptureJob, GeoFix } from './src/types';
 
 const ALBUM_NAME = 'GeoField Photos';
 const WATERMARK_CANVAS_WIDTH = 420;
-const APP_SOFTWARE_TAG = 'GeoFieldCamera 1.0.0';
+const APP_SOFTWARE_TAG = 'Geo Field Camera 1.0.0';
+
+// expo-camera's `zoom` prop is a 0-1 fraction of the device's max optical
+// zoom range, not a "2x/3x" multiplier — these are just evenly spaced
+// presets across that range, labeled the way a camera app's UI
+// conventionally does.
+const ZOOM_PRESETS: Array<{ label: string; value: number }> = [
+  { label: '1x', value: 0 },
+  { label: '2x', value: 0.35 },
+  { label: '3x', value: 0.7 },
+];
+
+// The `ratio` prop only affects Android (expo-camera has no iOS
+// equivalent), so the control that changes it is hidden on iOS.
+const RATIO_OPTIONS: CameraRatio[] = ['4:3', '16:9', '1:1'];
 
 // expo-media-library runs native-module setup as soon as its module code
 // executes, which throws immediately on web (no OS photo gallery exists in
 // a browser). A static `import` always executes that code, even if every
 // call site is Platform-guarded, so it's required lazily here instead —
 // this require() only ever runs when Platform.OS !== 'web'.
-const MediaLibrary: typeof import('expo-media-library') | null =
-  Platform.OS === 'web' ? null : require('expo-media-library');
+//
+// The '/legacy' subpath (not the package root) is required deliberately:
+// SDK 57 moved createAssetAsync/getAlbumAsync/createAlbumAsync/
+// addAssetsToAlbumAsync/usePermissions to a new class-based API on the
+// root import, and the old function names now throw at call time instead
+// of just warning.
+const MediaLibrary: typeof import('expo-media-library/legacy') | null =
+  Platform.OS === 'web' ? null : require('expo-media-library/legacy');
 
 // @lodev09/react-native-exify is a Turbo Module: importing it calls
 // TurboModuleRegistry.getEnforcing('Exify') at the top of the file, which
@@ -111,6 +132,9 @@ function CameraScreen() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [zoom, setZoom] = useState(0);
+  const [ratioIndex, setRatioIndex] = useState(0);
+  const ratio = RATIO_OPTIONS[ratioIndex];
 
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
@@ -252,11 +276,28 @@ function CameraScreen() {
   return (
     <View style={styles.flex}>
       <StatusBar barStyle="light-content" />
-      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" />
+      <CameraView
+        ref={cameraRef}
+        style={StyleSheet.absoluteFill}
+        facing="back"
+        zoom={zoom}
+        ratio={Platform.OS === 'android' ? ratio : undefined}
+      />
 
       <View style={[styles.topOverlay, { top: insets.top + 12 }]} pointerEvents="none">
         <GPSOverlay fix={fix} lockLevel={lockLevel} errorMsg={errorMsg} />
       </View>
+
+      {Platform.OS === 'android' && (
+        <View style={[styles.ratioBadge, { bottom: insets.bottom + 110 }]}>
+          <Pressable
+            style={styles.ratioButton}
+            onPress={() => setRatioIndex((i) => (i + 1) % RATIO_OPTIONS.length)}
+          >
+            <Text style={styles.ratioButtonText}>{ratio}</Text>
+          </Pressable>
+        </View>
+      )}
 
       {lastSavedAt !== null && (
         <View style={[styles.savedToast, { top: insets.top + 12 }]} pointerEvents="none">
@@ -268,6 +309,22 @@ function CameraScreen() {
       )}
 
       <View style={[styles.bottomBar, { paddingBottom: insets.bottom + 24 }]}>
+        <View style={styles.zoomRow}>
+          {ZOOM_PRESETS.map((preset) => {
+            const active = zoom === preset.value;
+            return (
+              <Pressable
+                key={preset.label}
+                style={[styles.zoomButton, active && styles.zoomButtonActive]}
+                onPress={() => setZoom(preset.value)}
+              >
+                <Text style={[styles.zoomButtonText, active && styles.zoomButtonTextActive]}>
+                  {preset.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
         <ShutterButton disabled={!fix} busy={isCapturing} onPress={handleCapture} />
         <Text style={styles.hint}>
           {fix ? 'Coordinates locked to next photo' : 'Waiting for GPS before shutter unlocks'}
@@ -351,6 +408,44 @@ const styles = StyleSheet.create({
     right: 0,
     alignItems: 'center',
     paddingTop: 16,
+  },
+  zoomRow: {
+    flexDirection: 'row',
+    marginBottom: 18,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    padding: 4,
+  },
+  zoomButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
+  },
+  zoomButtonActive: {
+    backgroundColor: '#FFFFFF',
+  },
+  zoomButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  zoomButtonTextActive: {
+    color: '#0A0A0A',
+  },
+  ratioBadge: {
+    position: 'absolute',
+    right: 16,
+  },
+  ratioButton: {
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+  },
+  ratioButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
   hint: {
     color: '#EEEEEE',

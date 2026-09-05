@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "GeoFieldCamera",
+    "name": "Geo Field Camera",
     "slug": "GeoFieldCamera",
     "version": "1.0.0",
     "owner": "welborntrack",
@@ -10,7 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "GeoField Camera uses your precise location to record the exact coordinates of each fieldwork photo.",
+        "NSLocationWhenInUseUsageDescription": "Geo Field Camera uses your precise location to record the exact coordinates of each fieldwork photo.",
         "UIRequiresFullScreen": true
       }
     },
