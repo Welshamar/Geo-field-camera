@@ -4,6 +4,8 @@ import ViewShot, { ViewShotRef } from 'react-native-view-shot';
 import { CaptureJob } from '../types';
 import { formatCoordinate, formatTimestamp, formatZoom } from '../utils/format';
 
+const logoSource = require('../../assets/watermark-logo.png');
+
 interface Props {
   job: CaptureJob;
   canvasWidth: number;
@@ -13,9 +15,8 @@ interface Props {
 
 /**
  * Off-screen composite used purely to burn a lat/lon/timestamp watermark
- * into the bottom-right corner of the captured photo, and (once a logo
- * asset is provided — see the TODO below) a small logo watermark into the
- * bottom-left. `canvasWidth` should be close to the actual photo's pixel
+ * into the bottom-right corner of the captured photo, and the app logo
+ * into the bottom-left. `canvasWidth` should be close to the actual photo's pixel
  * width (see CameraScreen, which caps it for very large photos to bound
  * memory use) — ViewShot's width/height capture options scale up whatever
  * was actually rendered, so rendering at a much smaller size than the
@@ -51,12 +52,14 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
             onLoad={onImageLoad}
             onError={onImageError}
           />
-          {/* TODO: once a logo asset file exists (e.g. assets/watermark-logo.png),
-              add it here as a small bottom-left Image watermark:
-              <Image source={require('../../assets/watermark-logo.png')}
-                     style={{ position: 'absolute', left: '3%', bottom: '3%',
-                              width: canvasWidth * 0.12, height: canvasWidth * 0.12 }}
-                     resizeMode="contain" /> */}
+          <Image
+            source={logoSource}
+            style={[
+              styles.logo,
+              { width: canvasWidth * 0.12, height: canvasWidth * 0.12 },
+            ]}
+            resizeMode="contain"
+          />
           <View style={styles.badge}>
             <Text style={[styles.badgeText, { fontSize }]}>
               {formatCoordinate(job.fix.latitude, 'lat')}{' '}
@@ -92,6 +95,11 @@ const styles = StyleSheet.create({
   canvas: {
     overflow: 'hidden',
     backgroundColor: '#000000',
+  },
+  logo: {
+    position: 'absolute',
+    left: '3%',
+    bottom: '3%',
   },
   badge: {
     position: 'absolute',
