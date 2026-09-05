@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Dimensions,
+  FlatList,
   Image,
+  Modal,
   Platform,
   Pressable,
   StatusBar,
@@ -132,9 +133,23 @@ function CameraScreen() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
   const [previewUri, setPreviewUri] = useState<string | null>(null);
+  const [imageReady, setImageReady] = useState(false);
   const [zoom, setZoom] = useState(0);
   const [ratioIndex, setRatioIndex] = useState(0);
   const ratio = RATIO_OPTIONS[ratioIndex];
+  const [availableSizes, setAvailableSizes] = useState<string[]>([]);
+  const [pictureSize, setPictureSize] = useState<string | undefined>(undefined);
+  const [sizePickerOpen, setSizePickerOpen] = useState(false);
+
+  const handleCameraReady = useCallback(async () => {
+    try {
+      const sizes = await cameraRef.current?.getAvailablePictureSizesAsync();
+      if (sizes && sizes.length > 0) setAvailableSizes(sizes);
+    } catch {
+      // Some devices/platforms don't support querying this — the resolution
+      // picker just won't have any options to show, no crash either way.
+    }
+  }, []);
 
   const handleCapture = useCallback(async () => {
     if (!cameraRef.current || isCapturing) return;
@@ -175,6 +190,7 @@ function CameraScreen() {
           }
         : fix;
 
+      setImageReady(false);
       setPendingJob({
         rawUri: photo.uri,
         width: photo.width,
@@ -188,10 +204,21 @@ function CameraScreen() {
     }
   }, [fix, isCapturing]);
 
-  // Once the hidden WatermarkCanvas has laid out the freshly captured photo,
-  // rasterize it (burning in the lat/lon/timestamp badge) and save it.
+  // Safety net: local file:// images should fire onLoad almost instantly,
+  // but if it never fires for some reason, don't leave the shutter stuck
+  // disabled forever — proceed with the capture anyway after a timeout.
   useEffect(() => {
-    if (!pendingJob || !viewShotRef.current?.capture) return;
+    if (!pendingJob) return;
+    const timer = setTimeout(() => setImageReady(true), 3000);
+    return () => clearTimeout(timer);
+  }, [pendingJob]);
+
+  // Once the hidden WatermarkCanvas has actually finished loading and
+  // painting the freshly captured photo, rasterize it (burning in the
+  // lat/lon/timestamp badge) and save it. Waiting for imageReady matters:
+  // capturing before the Image has painted produces a solid black photo.
+  useEffect(() => {
+    if (!pendingJob || !imageReady || !viewShotRef.current?.capture) return;
     let cancelled = false;
 
     (async () => {
@@ -262,7 +289,7 @@ function CameraScreen() {
     return () => {
       cancelled = true;
     };
-  }, [pendingJob]);
+  }, [pendingJob, imageReady]);
 
   useEffect(() => {
     if (lastSavedAt === null) return;
@@ -282,6 +309,8 @@ function CameraScreen() {
         facing="back"
         zoom={zoom}
         ratio={Platform.OS === 'android' ? ratio : undefined}
+        pictureSize={pictureSize}
+        onCameraReady={handleCameraReady}
       />
 
       <View style={[styles.topOverlay, { top: insets.top + 12 }]} pointerEvents="none">
@@ -298,6 +327,49 @@ function CameraScreen() {
           </Pressable>
         </View>
       )}
+
+      {availableSizes.length > 0 && (
+        <View style={[styles.resolutionBadge, { bottom: insets.bottom + 158 }]}>
+          <Pressable style={styles.ratioButton} onPress={() => setSizePickerOpen(true)}>
+            <Text style={styles.ratioButtonText}>{pictureSize ?? 'Auto res'}</Text>
+          </Pressable>
+        </View>
+      )}
+
+      <Modal
+        visible={sizePickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSizePickerOpen(false)}
+      >
+        <Pressable style={styles.modalBackdrop} onPress={() => setSizePickerOpen(false)}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Photo resolution</Text>
+            <FlatList
+              data={['Auto (device default)', ...availableSizes]}
+              keyExtractor={(item) => item}
+              style={styles.modalList}
+              renderItem={({ item }) => {
+                const isAuto = item === 'Auto (device default)';
+                const active = isAuto ? pictureSize === undefined : pictureSize === item;
+                return (
+                  <Pressable
+                    style={[styles.modalRow, active && styles.modalRowActive]}
+                    onPress={() => {
+                      setPictureSize(isAuto ? undefined : item);
+                      setSizePickerOpen(false);
+                    }}
+                  >
+                    <Text style={[styles.modalRowText, active && styles.modalRowTextActive]}>
+                      {item}
+                    </Text>
+                  </Pressable>
+                );
+              }}
+            />
+          </View>
+        </Pressable>
+      </Modal>
 
       {lastSavedAt !== null && (
         <View style={[styles.savedToast, { top: insets.top + 12 }]} pointerEvents="none">
@@ -331,10 +403,17 @@ function CameraScreen() {
         </Text>
       </View>
 
-      {/* Off-screen compositor: never visible, used only to burn the watermark in. */}
+      {/* Invisible (opacity 0) compositor: still fully rendered on-screen so
+          it actually paints, used only to burn the watermark in. */}
       {pendingJob && (
         <View style={styles.hiddenCanvasHost} pointerEvents="none">
-          <WatermarkCanvas ref={viewShotRef} job={pendingJob} canvasWidth={WATERMARK_CANVAS_WIDTH} />
+          <WatermarkCanvas
+            ref={viewShotRef}
+            job={pendingJob}
+            canvasWidth={WATERMARK_CANVAS_WIDTH}
+            onImageLoad={() => setImageReady(true)}
+            onImageError={() => setImageReady(true)}
+          />
         </View>
       )}
     </View>
@@ -436,6 +515,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 16,
   },
+  resolutionBadge: {
+    position: 'absolute',
+    right: 16,
+  },
   ratioButton: {
     backgroundColor: 'rgba(0,0,0,0.6)',
     paddingHorizontal: 12,
@@ -447,6 +530,44 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCard: {
+    backgroundColor: '#1C1C1E',
+    borderRadius: 14,
+    width: '80%',
+    maxHeight: '60%',
+    paddingVertical: 12,
+  },
+  modalTitle: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+    paddingHorizontal: 16,
+    paddingBottom: 10,
+  },
+  modalList: {
+    flexGrow: 0,
+  },
+  modalRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  modalRowActive: {
+    backgroundColor: 'rgba(52,199,89,0.15)',
+  },
+  modalRowText: {
+    color: '#EEEEEE',
+    fontSize: 14,
+  },
+  modalRowTextActive: {
+    color: '#34C759',
+    fontWeight: '700',
+  },
   hint: {
     color: '#EEEEEE',
     fontSize: 12,
@@ -455,8 +576,15 @@ const styles = StyleSheet.create({
     textShadowRadius: 4,
   },
   hiddenCanvasHost: {
+    // Positioned on-screen (not translated off-screen) with opacity 0: a
+    // view placed far outside the viewport can end up never actually
+    // drawn by the OS compositor, since it's an optimization target for
+    // being off-screen — and an undrawn view captures as solid black.
+    // Keeping it within the viewport but invisible guarantees it's
+    // actually rendered before ViewShot captures it.
     position: 'absolute',
     top: 0,
-    left: Dimensions.get('window').width + 50,
+    left: 0,
+    opacity: 0,
   },
 });

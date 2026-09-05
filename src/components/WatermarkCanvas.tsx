@@ -7,6 +7,8 @@ import { formatCoordinate, formatTimestamp } from '../utils/format';
 interface Props {
   job: CaptureJob;
   canvasWidth: number;
+  onImageLoad?: () => void;
+  onImageError?: () => void;
 }
 
 /**
@@ -16,44 +18,49 @@ interface Props {
  * pixel resolution by CameraScreen, which scales the watermark text up
  * proportionally so it stays correctly sized in the final image.
  */
-const WatermarkCanvas = forwardRef<ViewShotRef, Props>(({ job, canvasWidth }, ref) => {
-  const canvasHeight = canvasWidth * (job.height / job.width);
-  const fontSize = Math.max(canvasWidth * 0.032, 9);
+const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
+  ({ job, canvasWidth, onImageLoad, onImageError }, ref) => {
+    const canvasHeight = canvasWidth * (job.height / job.width);
+    const fontSize = Math.max(canvasWidth * 0.032, 9);
 
-  return (
-    <ViewShot
-      ref={ref}
-      options={{
-        format: 'jpg',
-        quality: 0.92,
-        result: 'tmpfile',
-        width: job.width,
-        height: job.height,
-      }}
-    >
-      <View style={[styles.canvas, { width: canvasWidth, height: canvasHeight }]}>
-        <Image
-          source={{ uri: job.rawUri }}
-          style={StyleSheet.absoluteFill}
-          resizeMode="cover"
-        />
-        <View style={styles.badge}>
-          <Text style={[styles.badgeText, { fontSize }]}>
-            {formatCoordinate(job.fix.latitude, 'lat')} {formatCoordinate(job.fix.longitude, 'lon')}
-          </Text>
-          {job.fix.accuracy !== null && (
-            <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
-              ±{job.fix.accuracy.toFixed(1)}m accuracy
+    return (
+      <ViewShot
+        ref={ref}
+        options={{
+          format: 'jpg',
+          quality: 0.92,
+          result: 'tmpfile',
+          width: job.width,
+          height: job.height,
+        }}
+      >
+        <View style={[styles.canvas, { width: canvasWidth, height: canvasHeight }]}>
+          <Image
+            source={{ uri: job.rawUri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            onLoad={onImageLoad}
+            onError={onImageError}
+          />
+          <View style={styles.badge}>
+            <Text style={[styles.badgeText, { fontSize }]}>
+              {formatCoordinate(job.fix.latitude, 'lat')}{' '}
+              {formatCoordinate(job.fix.longitude, 'lon')}
             </Text>
-          )}
-          <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
-            {formatTimestamp(job.capturedAt)}
-          </Text>
+            {job.fix.accuracy !== null && (
+              <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
+                ±{job.fix.accuracy.toFixed(1)}m accuracy
+              </Text>
+            )}
+            <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
+              {formatTimestamp(job.capturedAt)}
+            </Text>
+          </View>
         </View>
-      </View>
-    </ViewShot>
-  );
-});
+      </ViewShot>
+    );
+  }
+);
 
 WatermarkCanvas.displayName = 'WatermarkCanvas';
 export default WatermarkCanvas;
