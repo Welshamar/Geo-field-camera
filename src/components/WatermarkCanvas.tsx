@@ -22,9 +22,10 @@ interface Props {
  * source photo and relying on that resize to reach full resolution just
  * produces a blurry, upscaled result rather than genuine detail.
  *
- * Output format is PNG (lossless) rather than JPEG: chosen deliberately
- * over JPEG's smaller/faster files for maximum retained detail, at the
- * cost of noticeably longer save times and much larger files.
+ * Output format is high-quality JPEG (0.97), not PNG: PNG was tried first
+ * for maximum retained detail, but its encode time made hitting a ~2s
+ * save target unrealistic at this resolution. JPEG at 0.97 is close to
+ * visually lossless and encodes dramatically faster.
  */
 const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
   ({ job, canvasWidth, onImageLoad, onImageError }, ref) => {
@@ -35,7 +36,8 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
       <ViewShot
         ref={ref}
         options={{
-          format: 'png',
+          format: 'jpg',
+          quality: 0.97,
           result: 'tmpfile',
           width: job.width,
           height: job.height,

@@ -44,7 +44,16 @@ const APP_SOFTWARE_TAG = 'Geo Field Camera 1.0.0';
 
 // The `ratio` prop only affects Android (expo-camera has no iOS
 // equivalent), so the control that changes it is hidden on iOS.
-const RATIO_OPTIONS: CameraRatio[] = ['4:3', '16:9', '1:1'];
+//
+// 'full' means "don't pass a ratio prop at all". Setting `ratio` on
+// CameraView switches Android's preview scaleType from FILL (crops to
+// completely fill the screen, no letterboxing) to FIT (shows the whole
+// frame at that exact ratio, with black bars) — always defaulting to a
+// specific ratio meant the preview was never actually full-screen. 'full'
+// is the default; picking an explicit ratio is an opt-in trade of
+// full-bleed preview for a known aspect ratio.
+type RatioSelection = CameraRatio | 'full';
+const RATIO_OPTIONS: RatioSelection[] = ['full', '4:3', '16:9', '1:1'];
 
 // Cycle order for the flash mode badge, starting with 'on': expo-camera
 // exposes no manual exposure/brightness control on native platforms at
@@ -350,7 +359,7 @@ function CameraScreen() {
         style={StyleSheet.absoluteFill}
         facing="back"
         zoom={zoom}
-        ratio={Platform.OS === 'android' ? ratio : undefined}
+        ratio={Platform.OS === 'android' && ratio !== 'full' ? ratio : undefined}
         pictureSize={pictureSize}
         flash={flash}
         enableTorch={torchOn}
@@ -369,7 +378,7 @@ function CameraScreen() {
             style={styles.ratioButton}
             onPress={() => setRatioIndex((i) => (i + 1) % RATIO_OPTIONS.length)}
           >
-            <Text style={styles.ratioButtonText}>{ratio}</Text>
+            <Text style={styles.ratioButtonText}>{ratio === 'full' ? 'Full screen' : ratio}</Text>
           </Pressable>
         </View>
       )}
