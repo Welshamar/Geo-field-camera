@@ -6,6 +6,11 @@ import { formatCoordinate, formatTimestamp, formatZoom } from '../utils/format';
 
 const logoSource = require('../../assets/watermark-logo.png');
 
+// Opacity of the white 'screen'-blend brighten layer — see the comment
+// where it's used below. 0 = no effect, 1 = fully white. Tune this single
+// number to adjust brightening strength without touching layout code.
+const BRIGHTEN_OPACITY = 0.28;
+
 interface Props {
   job: CaptureJob;
   canvasWidth: number;
@@ -52,6 +57,18 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
             onLoad={onImageLoad}
             onError={onImageError}
           />
+          {/* Software brighten: expo-camera has no exposure/brightness API on
+              native platforms (confirmed by reading the SDK's own types —
+              those only exist in the web implementation), so flash/torch/
+              resolution are the only camera-level levers. This is a real
+              lever beyond that: a 'screen' blend lightens shadows more than
+              highlights (unlike a flat opacity fade, which just washes
+              everything toward grey), similar in spirit to what a phone's
+              camera ISP does automatically. Intensity is deliberately
+              conservative so well-lit daylight photos aren't visibly
+              altered — raise BRIGHTEN_OPACITY if dark scenes still need
+              more lift. */}
+          <View style={[StyleSheet.absoluteFill, styles.brighten]} />
           <Image
             source={logoSource}
             style={[
@@ -100,6 +117,10 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: '3%',
     bottom: '3%',
+  },
+  brighten: {
+    backgroundColor: `rgba(255,255,255,${BRIGHTEN_OPACITY})`,
+    mixBlendMode: 'screen',
   },
   badge: {
     position: 'absolute',
