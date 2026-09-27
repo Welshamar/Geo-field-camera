@@ -33,13 +33,14 @@ import { CaptureJob, GeoFix } from './src/types';
 const ALBUM_NAME = 'GeoField Photos';
 // Cap on the watermark compositor's on-screen render width — see
 // WatermarkCanvas for why this needs to be close to the real photo
-// resolution, not a tiny fixed size. Capped so an extremely
-// high-resolution capture doesn't force rendering (and decoding the
-// source photo into) an enormous off-screen view. Raised well above most
-// phone cameras' native width (commonly 3000-4032px) so the vast majority
-// of captures render at effectively full detail with no meaningful
-// upscaling at all.
-const MAX_WATERMARK_CANVAS_WIDTH = 3200;
+// resolution, not a tiny fixed size. This does NOT change the saved
+// photo's pixel dimensions — ViewShot's width/height options always
+// output at the camera's actual captured resolution (job.width x
+// job.height) regardless of this number. It only controls how much
+// internal upscaling happens during compositing, i.e. fine-detail
+// sharpness, not pixel count. Lowered from 3200 to trade a little of
+// that sharpness for faster saves.
+const MAX_WATERMARK_CANVAS_WIDTH = 2400;
 const APP_SOFTWARE_TAG = 'Geo Field Camera 1.0.0';
 
 // The `ratio` prop only affects Android (expo-camera has no iOS
@@ -300,8 +301,13 @@ function CameraScreen() {
         // expo-media-library has no web implementation — there is no OS
         // photo gallery to save into from a browser.
         if (MediaLibrary) {
-          const asset = await MediaLibrary.createAssetAsync(outputUri);
-          const album = await MediaLibrary.getAlbumAsync(ALBUM_NAME);
+          // Creating the asset and looking up the album are independent —
+          // only the final add/create step needs both results — so run
+          // them concurrently instead of one after the other.
+          const [asset, album] = await Promise.all([
+            MediaLibrary.createAssetAsync(outputUri),
+            MediaLibrary.getAlbumAsync(ALBUM_NAME),
+          ]);
           if (album) {
             await MediaLibrary.addAssetsToAlbumAsync([asset], album, false);
           } else {
