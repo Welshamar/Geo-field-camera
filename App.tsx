@@ -15,10 +15,8 @@ import {
 } from 'react-native';
 import { CameraRatio, CameraView, FlashMode, useCameraPermissions } from 'expo-camera';
 import * as Location from 'expo-location';
-import * as Device from 'expo-device';
 import { ViewShotRef } from 'react-native-view-shot';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { ExifTags } from '@lodev09/react-native-exify';
 
 import FocusGrid from './src/components/FocusGrid';
 import GPSOverlay from './src/components/GPSOverlay';
@@ -27,8 +25,14 @@ import PermissionScreen from './src/components/PermissionScreen';
 import WatermarkCanvas from './src/components/WatermarkCanvas';
 import ZoomSlider from './src/components/ZoomSlider';
 import { useLocationTracker } from './src/hooks/useLocationTracker';
-import { formatExifDateTime, formatZoom, gpsLockLevel } from './src/utils/format';
+import { BRIGHTNESS_PRESETS, DEFAULT_BRIGHTNESS_INDEX } from './src/utils/brightness';
+import { buildExifTags } from './src/utils/exifTags';
+import { formatZoom, gpsLockLevel } from './src/utils/format';
 import { CaptureJob, GeoFix } from './src/types';
+
+// Whether the geotag metadata was written into the saved file, shown in the
+// "Saved" toast so a failure is visible instead of silently swallowed.
+type MetadataStatus = 'ok' | 'failed' | 'unavailable';
 
 const ALBUM_NAME = 'GeoField Photos';
 // Cap on the watermark compositor's on-screen render width — see
@@ -41,7 +45,6 @@ const ALBUM_NAME = 'GeoField Photos';
 // sharpness, not pixel count. Lowered from 3200 to trade a little of
 // that sharpness for faster saves.
 const MAX_WATERMARK_CANVAS_WIDTH = 2400;
-const APP_SOFTWARE_TAG = 'Geo Field Camera 1.0.0';
 
 // The `ratio` prop only affects Android (expo-camera has no iOS
 // equivalent), so the control that changes it is hidden on iOS.
@@ -171,6 +174,8 @@ function CameraScreen() {
   const [flashIndex, setFlashIndex] = useState(0); // starts at 'on'
   const flash = FLASH_MODES[flashIndex];
   const [torchOn, setTorchOn] = useState(false);
+  const [brightnessIndex, setBrightnessIndex] = useState(DEFAULT_BRIGHTNESS_INDEX);
+  const [metadataStatus, setMetadataStatus] = useState<MetadataStatus>('unavailable');
 
   const handleCameraReady = useCallback(async () => {
     try {
@@ -210,7 +215,10 @@ function CameraScreen() {
       // embedded coordinate is the one at the instant of capture rather than
       // the last background tick (which can be up to ~1s stale).
       const [photo, freshPosition] = await Promise.all([
-        cameraRef.current.takePictureAsync({ quality: 1 }),
+        // exif: true returns the camera's own shooting data (exposure, ISO,
+        // aperture, focal length, make/model) so it can be carried into the
+        // saved file's metadata, which is a fresh JPEG with none of it.
+        cameraRef.current.takePictureAsync({ quality: 1, exif: true }),
         Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.BestForNavigation }).catch(
           () => null
         ),
@@ -240,12 +248,14 @@ function CameraScreen() {
         fix: capturedFix,
         capturedAt,
         zoom,
+        brightnessIndex,
+        cameraExif: photo.exif ?? undefined,
       });
     } catch (err) {
       Alert.alert('Capture failed', err instanceof Error ? err.message : 'Unknown error.');
       setIsCapturing(false);
     }
-  }, [fix, isCapturing, zoom]);
+  }, [fix, isCapturing, zoom, brightnessIndex]);
 
   // Safety net: local file:// images should fire onLoad almost instantly,
   // but if it never fires for some reason, don't leave the shutter stuck
@@ -270,31 +280,31 @@ function CameraScreen() {
 
         if (cancelled) return;
 
-        // Write real EXIF GPS + device metadata into the watermarked file
-        // itself (the ViewShot rasterization above produces a fresh JPEG
-        // with no EXIF of its own, so this has to happen after capture).
-        // Best-effort: falls through silently if the native module isn't
-        // available (web, or Expo Go without a custom dev build).
+        // Write the geotag, time, device and camera settings into the saved
+        // file's EXIF (the ViewShot rasterization above produces a fresh JPEG
+        // with none of its own, so this has to happen after capture).
+        // Not available on web or in Expo Go (the native module isn't
+        // linked there), which is reported as 'unavailable', not an error.
+        let status: MetadataStatus = 'unavailable';
         const exify = getExify();
         if (exify) {
+          const exifUri = outputUri.startsWith('file://') ? outputUri : `file://${outputUri}`;
+          const { essential, full } = buildExifTags(pendingJob);
+          // The native writer reports back what it actually stored; GPS
+          // coming back means the geotag really is in the file.
+          const wroteGps = (result: { tags?: { GPSLatitude?: unknown } }) =>
+            result.tags?.GPSLatitude != null;
           try {
-            const exifUri = outputUri.startsWith('file://') ? outputUri : `file://${outputUri}`;
-            const tags: ExifTags = {
-              GPSLatitude: pendingJob.fix.latitude,
-              GPSLongitude: pendingJob.fix.longitude,
-              DateTimeOriginal: formatExifDateTime(pendingJob.capturedAt),
-              DateTime: formatExifDateTime(pendingJob.capturedAt),
-              Make: Device.manufacturer ?? undefined,
-              Model: Device.modelName ?? undefined,
-              Software: APP_SOFTWARE_TAG,
-              HostComputer: [Device.osName, Device.osVersion].filter(Boolean).join(' ') || undefined,
-            };
-            if (pendingJob.fix.altitude !== null) {
-              tags.GPSAltitude = pendingJob.fix.altitude;
-            }
-            await exify.write(exifUri, tags);
+            status = wroteGps(await exify.write(exifUri, full)) ? 'ok' : 'failed';
           } catch (exifErr) {
-            console.warn('EXIF write failed, continuing without it:', exifErr);
+            console.warn('EXIF write failed, retrying with essentials only:', exifErr);
+            // One bad camera-reported value must not cost the geotag too.
+            try {
+              status = wroteGps(await exify.write(exifUri, essential)) ? 'ok' : 'failed';
+            } catch (retryErr) {
+              console.warn('EXIF essentials write failed:', retryErr);
+              status = 'failed';
+            }
           }
         }
 
@@ -316,6 +326,7 @@ function CameraScreen() {
         }
 
         if (!cancelled) {
+          setMetadataStatus(status);
           setPreviewUri(outputUri);
           setLastSavedAt(Date.now());
         }
@@ -417,11 +428,22 @@ function CameraScreen() {
         </Pressable>
       </View>
 
+      <View style={[styles.floatingBadge, badgePosition(4)]}>
+        <Pressable
+          style={[styles.ratioButton, brightnessIndex > 0 && styles.brightButtonActive]}
+          onPress={() => setBrightnessIndex((i) => (i + 1) % BRIGHTNESS_PRESETS.length)}
+        >
+          <Text style={[styles.ratioButtonText, brightnessIndex > 0 && styles.torchButtonTextActive]}>
+            Bright: {BRIGHTNESS_PRESETS[brightnessIndex].label}
+          </Text>
+        </Pressable>
+      </View>
+
       <View
         style={[
           styles.zoomSliderHost,
           isLandscape
-            ? { left: (insets.left || 0) + 16, top: insets.top + 90 + 4 * 48 + 16 }
+            ? { left: (insets.left || 0) + 16, top: insets.top + 90 + 5 * 48 + 16 }
             : { left: 16, top: '32%' },
         ]}
         pointerEvents="box-none"
@@ -476,6 +498,11 @@ function CameraScreen() {
           <Text style={styles.savedToastText}>
             {Platform.OS === 'web' ? 'Captured ✓ (no gallery on web)' : 'Saved ✓'}
           </Text>
+          {metadataStatus !== 'unavailable' && (
+            <Text style={styles.savedToastText}>
+              {metadataStatus === 'ok' ? 'Geotag metadata ✓' : 'Geotag metadata failed'}
+            </Text>
+          )}
           {previewUri && <Image source={{ uri: previewUri }} style={styles.previewThumb} />}
         </View>
       )}
@@ -602,6 +629,9 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   torchButtonActive: {
+    backgroundColor: '#FFCC00',
+  },
+  brightButtonActive: {
     backgroundColor: '#FFCC00',
   },
   torchButtonTextActive: {

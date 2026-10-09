@@ -1,15 +1,17 @@
 import React, { forwardRef } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
 import ViewShot, { ViewShotRef } from 'react-native-view-shot';
+import * as Device from 'expo-device';
 import { CaptureJob } from '../types';
-import { formatCoordinate, formatTimestamp, formatZoom } from '../utils/format';
+import { BRIGHTNESS_PRESETS } from '../utils/brightness';
+import { formatAltitude, formatCoordinate, formatTimestamp, formatZoom } from '../utils/format';
 
 const logoSource = require('../../assets/watermark-logo.png');
 
-// Opacity of the white 'screen'-blend brighten layer — see the comment
-// where it's used below. 0 = no effect, 1 = fully white. Tune this single
-// number to adjust brightening strength without touching layout code.
-const BRIGHTEN_OPACITY = 0.28;
+// Accent colours taken from the app logo so the panel reads as part of it.
+const PANEL_BG = 'rgba(10,22,40,0.8)';
+const ACCENT = '#E8453C';
+const LABEL_COLOR = '#8FA8C4';
 
 interface Props {
   job: CaptureJob;
@@ -19,26 +21,43 @@ interface Props {
 }
 
 /**
- * Off-screen composite used purely to burn a lat/lon/timestamp watermark
- * into the bottom-right corner of the captured photo, and the app logo
- * into the bottom-left. `canvasWidth` should be close to the actual photo's pixel
- * width (see CameraScreen, which caps it for very large photos to bound
- * memory use) — ViewShot's width/height capture options scale up whatever
- * was actually rendered, so rendering at a much smaller size than the
- * source photo and relying on that resize to reach full resolution just
- * produces a blurry, upscaled result rather than genuine detail.
+ * Off-screen composite that produces the saved photo: the captured image
+ * (with the brightness boost applied to it alone), the app logo bottom-left
+ * and an organised geotag panel bottom-right.
  *
- * Output format is high-quality JPEG (0.92), not PNG: PNG was tried first
- * for maximum retained detail, but its encode time made hitting a fast
- * save target unrealistic at this resolution. JPEG at 0.92 is still very
- * high quality and encodes dramatically faster; this doesn't affect the
- * saved photo's pixel dimensions (see MAX_WATERMARK_CANVAS_WIDTH in
- * App.tsx), only its compression.
+ * `canvasWidth` should be close to the actual photo's pixel width — see
+ * MAX_WATERMARK_CANVAS_WIDTH in App.tsx. It controls internal render
+ * detail only; ViewShot always outputs at job.width x job.height.
+ *
+ * Everything on the panel and logo is sized from the SHORTER side of the
+ * canvas, so the stamp covers the same share of the picture whether the
+ * photo is portrait, landscape or a wide panorama.
+ *
+ * Output is JPEG at 0.92 rather than PNG: PNG's encode time made a fast
+ * save unrealistic at this resolution, and this has no effect on the
+ * saved photo's pixel dimensions, only its compression.
  */
 const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
   ({ job, canvasWidth, onImageLoad, onImageError }, ref) => {
     const canvasHeight = canvasWidth * (job.height / job.width);
-    const fontSize = Math.max(canvasWidth * 0.032, 9);
+    const unit = Math.min(canvasWidth, canvasHeight);
+    const fontSize = Math.max(unit * 0.017, 9);
+    const margin = unit * 0.02;
+
+    const preset = BRIGHTNESS_PRESETS[job.brightnessIndex] ?? BRIGHTNESS_PRESETS[0];
+    const boosted = preset.gain !== 1 || preset.saturate !== 1;
+
+    const { fix } = job;
+    const device = [Device.manufacturer, Device.modelName].filter(Boolean).join(' ');
+    const rows: Array<[string, string]> = [
+      ['LAT', formatCoordinate(fix.latitude, 'lat')],
+      ['LON', formatCoordinate(fix.longitude, 'lon')],
+    ];
+    if (fix.altitude !== null) rows.push(['ALT', formatAltitude(fix.altitude)]);
+    if (fix.accuracy !== null) rows.push(['ACC', `±${fix.accuracy.toFixed(1)} m`]);
+    rows.push(['ZOOM', formatZoom(job.zoom)]);
+    rows.push(['TIME', formatTimestamp(job.capturedAt)]);
+    if (device) rows.push(['DEVICE', device]);
 
     return (
       <ViewShot
@@ -52,54 +71,72 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
         }}
       >
         <View style={[styles.canvas, { width: canvasWidth, height: canvasHeight }]}>
-          <Image
-            source={{ uri: job.rawUri }}
-            style={StyleSheet.absoluteFill}
-            resizeMode="cover"
-            onLoad={onImageLoad}
-            onError={onImageError}
-          />
-          {/* Software brighten: expo-camera has no exposure/brightness API on
-              native platforms (confirmed by reading the SDK's own types —
-              those only exist in the web implementation), so flash/torch/
-              resolution are the only camera-level levers. This is a real
-              lever beyond that: a 'screen' blend lightens shadows more than
-              highlights (unlike a flat opacity fade, which just washes
-              everything toward grey), similar in spirit to what a phone's
-              camera ISP does automatically. Intensity is deliberately
-              conservative so well-lit daylight photos aren't visibly
-              altered — raise BRIGHTEN_OPACITY if dark scenes still need
-              more lift. */}
-          <View style={[StyleSheet.absoluteFill, styles.brighten]} />
+          {/* Brightness is applied to the photo only: a linear gain via the
+              `filter` style, then a translucent white 'screen' blend that
+              lifts shadows more than highlights. Neither touches the logo
+              or panel, which are drawn afterwards. See utils/brightness. */}
+          <View
+            collapsable={false}
+            style={[
+              StyleSheet.absoluteFill,
+              boosted
+                ? { filter: [{ brightness: preset.gain }, { saturate: preset.saturate }] }
+                : null,
+            ]}
+          >
+            <Image
+              source={{ uri: job.rawUri }}
+              style={StyleSheet.absoluteFill}
+              resizeMode="cover"
+              onLoad={onImageLoad}
+              onError={onImageError}
+            />
+          </View>
+          {preset.lift > 0 && (
+            <View
+              collapsable={false}
+              style={[
+                StyleSheet.absoluteFill,
+                { backgroundColor: `rgba(255,255,255,${preset.lift})`, mixBlendMode: 'screen' },
+              ]}
+            />
+          )}
+
           <Image
             source={logoSource}
-            style={[
-              styles.logo,
-              { width: canvasWidth * 0.12, height: canvasWidth * 0.12 },
-            ]}
+            style={{
+              position: 'absolute',
+              left: margin,
+              bottom: margin,
+              width: unit * 0.13,
+              height: unit * 0.13,
+            }}
             resizeMode="contain"
           />
-          <View style={styles.badge}>
-            <Text style={[styles.badgeText, { fontSize }]}>
-              {formatCoordinate(job.fix.latitude, 'lat')}{' '}
-              {formatCoordinate(job.fix.longitude, 'lon')}
+
+          <View
+            style={[
+              styles.panel,
+              {
+                right: margin,
+                bottom: margin,
+                padding: fontSize * 0.75,
+                borderRadius: fontSize * 0.6,
+                borderLeftWidth: fontSize * 0.28,
+              },
+            ]}
+          >
+            <Text style={[styles.title, { fontSize: fontSize * 0.8, marginBottom: fontSize * 0.4 }]}>
+              GEOTAG
             </Text>
-            {job.fix.altitude !== null && (
-              <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
-                Alt {job.fix.altitude.toFixed(1)}m
-              </Text>
-            )}
-            {job.fix.accuracy !== null && (
-              <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
-                ±{job.fix.accuracy.toFixed(1)}m accuracy
-              </Text>
-            )}
-            <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
-              Zoom {formatZoom(job.zoom)}
-            </Text>
-            <Text style={[styles.badgeText, { fontSize: fontSize * 0.85 }]}>
-              {formatTimestamp(job.capturedAt)}
-            </Text>
+            {rows.map(([label, value]) => (
+              <View key={label} style={[styles.row, { marginTop: fontSize * 0.22 }]}>
+                <Text style={[styles.label, { fontSize: fontSize * 0.78, width: fontSize * 4.4 }]}>
+                  {label}
+                </Text>
+                <Text style={[styles.value, { fontSize }]}>{value}</Text>
+              </View>
+            ))}
           </View>
         </View>
       </ViewShot>
@@ -115,26 +152,28 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     backgroundColor: '#000000',
   },
-  logo: {
+  panel: {
     position: 'absolute',
-    left: '3%',
-    bottom: '3%',
+    backgroundColor: PANEL_BG,
+    borderLeftColor: ACCENT,
   },
-  brighten: {
-    backgroundColor: `rgba(255,255,255,${BRIGHTEN_OPACITY})`,
-    mixBlendMode: 'screen',
+  title: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    letterSpacing: 2,
   },
-  badge: {
-    position: 'absolute',
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.55)',
-    paddingHorizontal: '3%',
-    paddingVertical: '2%',
-    alignItems: 'flex-end',
+  row: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
   },
-  badgeText: {
+  label: {
+    color: LABEL_COLOR,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  value: {
     color: '#FFFFFF',
     fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
 });

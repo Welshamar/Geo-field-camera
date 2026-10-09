@@ -25,6 +25,24 @@ export function formatExifDateTime(ms: number): string {
   )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+// GPSDateStamp / GPSTimeStamp are defined by the EXIF spec as UTC, unlike
+// the DateTime* tags above which are local time.
+export function formatExifGpsDate(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${d.getUTCFullYear()}:${pad(d.getUTCMonth() + 1)}:${pad(d.getUTCDate())}`;
+}
+
+export function formatExifGpsTime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => n.toString().padStart(2, '0');
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`;
+}
+
+export function formatAltitude(altitude: number): string {
+  return `${altitude.toFixed(1)} m`;
+}
+
 // expo-camera's `zoom` prop is a 0-1 fraction of the device's zoom range,
 // not a real optical "Xx" factor — there's no API to read the device's
 // actual max zoom multiplier. This is a fixed, approximate mapping used
