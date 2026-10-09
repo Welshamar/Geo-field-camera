@@ -6,6 +6,7 @@ import {
   Image,
   Modal,
   Platform,
+  PixelRatio,
   Pressable,
   StatusBar,
   StyleSheet,
@@ -35,16 +36,26 @@ import { CaptureJob, GeoFix } from './src/types';
 type MetadataStatus = 'ok' | 'failed' | 'unavailable';
 
 const ALBUM_NAME = 'GeoField Photos';
-// Cap on the watermark compositor's on-screen render width — see
-// WatermarkCanvas for why this needs to be close to the real photo
-// resolution, not a tiny fixed size. This does NOT change the saved
-// photo's pixel dimensions — ViewShot's width/height options always
-// output at the camera's actual captured resolution (job.width x
-// job.height) regardless of this number. It only controls how much
-// internal upscaling happens during compositing, i.e. fine-detail
-// sharpness, not pixel count. Lowered from 3200 to trade a little of
-// that sharpness for faster saves.
-const MAX_WATERMARK_CANVAS_WIDTH = 2400;
+// Cap on how many PIXELS the watermark compositor renders — the main lever
+// on save time and memory. ViewShot draws the view at its native pixel size
+// and then scales the bitmap to the output size, so this is the true cost
+// of a save. It does NOT change the saved photo's pixel dimensions
+// (ViewShot always outputs at job.width x job.height, the camera's own
+// resolution); it only sets how much internal upscaling happens, i.e.
+// fine-detail sharpness. Capped by AREA so a portrait, landscape or
+// panoramic photo each cost the same.
+const MAX_WATERMARK_PIXELS = 8_000_000;
+
+/**
+ * The compositor's width in layout units (dp). Its size is in dp, not
+ * pixels — drawing it at `pixels` wide means dividing by PixelRatio, which
+ * an earlier version forgot, rendering ~2.6-3x too large per side (around
+ * 30 megapixels) and making saves slow.
+ */
+function compositorWidthDp(photoWidth: number, photoHeight: number): number {
+  const scale = Math.min(1, Math.sqrt(MAX_WATERMARK_PIXELS / (photoWidth * photoHeight)));
+  return (photoWidth * scale) / PixelRatio.get();
+}
 
 // The `ratio` prop only affects Android (expo-camera has no iOS
 // equivalent), so the control that changes it is hidden on iOS.
@@ -528,7 +539,7 @@ function CameraScreen() {
           <WatermarkCanvas
             ref={viewShotRef}
             job={pendingJob}
-            canvasWidth={Math.min(pendingJob.width, MAX_WATERMARK_CANVAS_WIDTH)}
+            canvasWidth={compositorWidthDp(pendingJob.width, pendingJob.height)}
             onImageLoad={() => setImageReady(true)}
             onImageError={() => setImageReady(true)}
           />

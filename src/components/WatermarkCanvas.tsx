@@ -3,7 +3,7 @@ import { Image, StyleSheet, Text, View } from 'react-native';
 import ViewShot, { ViewShotRef } from 'react-native-view-shot';
 import * as Device from 'expo-device';
 import { CaptureJob } from '../types';
-import { BRIGHTNESS_PRESETS } from '../utils/brightness';
+import { BRIGHTNESS_PRESETS, boostLayerOpacities } from '../utils/brightness';
 import { formatAltitude, formatCoordinate, formatTimestamp, formatZoom } from '../utils/format';
 
 const logoSource = require('../../assets/watermark-logo.png');
@@ -25,8 +25,10 @@ interface Props {
  * (with the brightness boost applied to it alone), the app logo bottom-left
  * and an organised geotag panel bottom-right.
  *
- * `canvasWidth` should be close to the actual photo's pixel width — see
- * MAX_WATERMARK_CANVAS_WIDTH in App.tsx. It controls internal render
+ * `canvasWidth` is in layout units (dp), NOT pixels: ViewShot draws the view
+ * at its native pixel size (canvasWidth x PixelRatio) and only then scales
+ * the bitmap to the output size, so callers must divide the pixel width they
+ * want by PixelRatio.get() — see CameraScreen. It controls internal render
  * detail only; ViewShot always outputs at job.width x job.height.
  *
  * Everything on the panel and logo is sized from the SHORTER side of the
@@ -45,7 +47,6 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
     const margin = unit * 0.02;
 
     const preset = BRIGHTNESS_PRESETS[job.brightnessIndex] ?? BRIGHTNESS_PRESETS[0];
-    const boosted = preset.gain !== 1 || preset.saturate !== 1;
 
     const { fix } = job;
     const device = [Device.manufacturer, Device.modelName].filter(Boolean).join(' ');
@@ -71,36 +72,30 @@ const WatermarkCanvas = forwardRef<ViewShotRef, Props>(
         }}
       >
         <View style={[styles.canvas, { width: canvasWidth, height: canvasHeight }]}>
-          {/* Brightness is applied to the photo only: a linear gain via the
-              `filter` style, then a translucent white 'screen' blend that
-              lifts shadows more than highlights. Neither touches the logo
-              or panel, which are drawn afterwards. See utils/brightness. */}
-          <View
-            collapsable={false}
-            style={[
-              StyleSheet.absoluteFill,
-              boosted
-                ? { filter: [{ brightness: preset.gain }, { saturate: preset.saturate }] }
-                : null,
-            ]}
-          >
-            <Image
-              source={{ uri: job.rawUri }}
-              style={StyleSheet.absoluteFill}
-              resizeMode="cover"
-              onLoad={onImageLoad}
-              onError={onImageError}
-            />
-          </View>
-          {preset.lift > 0 && (
+          <Image
+            source={{ uri: job.rawUri }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+            onLoad={onImageLoad}
+            onError={onImageError}
+          />
+          {/* Brightness: extra copies of the photo screened onto itself, drawn
+              before the logo and panel so only the photo is brightened. They
+              share the decoded bitmap with the base image. See utils/brightness. */}
+          {boostLayerOpacities(preset.boost).map((opacity, i) => (
             <View
+              key={i}
               collapsable={false}
-              style={[
-                StyleSheet.absoluteFill,
-                { backgroundColor: `rgba(255,255,255,${preset.lift})`, mixBlendMode: 'screen' },
-              ]}
-            />
-          )}
+              pointerEvents="none"
+              style={[StyleSheet.absoluteFill, { opacity, mixBlendMode: 'screen' }]}
+            >
+              <Image
+                source={{ uri: job.rawUri }}
+                style={StyleSheet.absoluteFill}
+                resizeMode="cover"
+              />
+            </View>
+          ))}
 
           <Image
             source={logoSource}
